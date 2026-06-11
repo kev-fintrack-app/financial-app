@@ -1,0 +1,166 @@
+services:
+
+  # =============================================================
+  # DATABASE — PostgreSQL 16
+  # =============================================================
+  # Single container with multiple databases (one per service).
+  # In production you'd use separate RDS instances for isolation.
+  postgres:
+    image: postgres:16-alpine
+    container_name: fintrack-postgres
+    environment:
+      POSTGRES_USER: fintrack
+      POSTGRES_PASSWORD: fintrack_secret
+      POSTGRES_DB: fintrack
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-databases.sql:/docker-entrypoint-initdb.d/init-databases.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fintrack"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # =============================================================
+  # CACHE — Redis 7
+  # =============================================================
+  # Used by api-gateway for rate limiting and response caching.
+  # Also used for JWT blacklist (token revocation).
+  redis:
+    image: redis:7-alpine
+    container_name: fintrack-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # =============================================================
+  # AWS SIMULATION — LocalStack
+  # =============================================================
+  # Simulates AWS services locally: SQS, SNS, S3.
+  # Your code talks to the same AWS SDK APIs, just pointed at localhost.
+  localstack:
+    image: localstack/localstack:3
+    container_name: fintrack-localstack
+    environment:
+      SERVICES: sqs,sns,s3
+      DEFAULT_REGION: us-east-1
+    ports:
+      - "4566:4566"
+    volumes:
+      - localstack_data:/var/lib/localstack
+
+  # =============================================================
+  # APPLICATION SERVICES
+  # =============================================================
+
+  auth-service:
+    build: ./fintrack-auth-service
+    container_name: fintrack-auth
+    ports:
+      - "8081:8081"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/auth_db
+      SPRING_DATASOURCE_USERNAME: fintrack
+      SPRING_DATASOURCE_PASSWORD: fintrack_secret
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  transaction-service:
+    build: ./fintrack-transaction-service
+    container_name: fintrack-transaction
+    ports:
+      - "8082:8082"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/transaction_db
+      SPRING_DATASOURCE_USERNAME: fintrack
+      SPRING_DATASOURCE_PASSWORD: fintrack_secret
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  budget-service:
+    build: ./fintrack-budget-service
+    container_name: fintrack-budget
+    ports:
+      - "8083:8083"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/budget_db
+      SPRING_DATASOURCE_USERNAME: fintrack
+      SPRING_DATASOURCE_PASSWORD: fintrack_secret
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  reporting-service:
+    build: ./fintrack-reporting-service
+    container_name: fintrack-reporting
+    ports:
+      - "8084:8084"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/reporting_db
+      SPRING_DATASOURCE_USERNAME: fintrack
+      SPRING_DATASOURCE_PASSWORD: fintrack_secret
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  notification-service:
+    build: ./fintrack-notification-service
+    container_name: fintrack-notification
+    ports:
+      - "8085:8085"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/notification_db
+      SPRING_DATASOURCE_USERNAME: fintrack
+      SPRING_DATASOURCE_PASSWORD: fintrack_secret
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_started
+
+  sync-service:
+    build: ./fintrack-sync-service
+    container_name: fintrack-sync
+    ports:
+      - "8086:8086"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/sync_db
+      SPRING_DATASOURCE_USERNAME: fintrack
+      SPRING_DATASOURCE_PASSWORD: fintrack_secret
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api-gateway:
+    build: ./fintrack-api-gateway
+    container_name: fintrack-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_REDIS_HOST: redis
+    depends_on:
+      redis:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+      transaction-service:
+        condition: service_started
+      budget-service:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  redis_data:
+  localstack_data:

@@ -1,0 +1,14 @@
+spring:
+  application:
+    name: auth-service
+  datasource:
+    url: jdbc:postgresql://postgres:5432/auth_db
+    username: fintrack
+    password: fintrack
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+
+server:
+  port: 8081
